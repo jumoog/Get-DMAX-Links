@@ -5,7 +5,6 @@ import os
 import re
 import time
 
-import xlsxwriter
 from requests import get
 
 import formats
@@ -29,45 +28,6 @@ NUM_OF_ATTEMPTS = 6
 def get_valid_filename(s):
     s = str(s).strip().replace(' ', '_')
     return re.sub(r'(?u)[^-\w.]', '', s)
-
-
-class WorkbookWriter:
-    """Wrapper around xlswriter."""
-
-    def __init__(self, filename):
-        """
-        Initializes the WorkookWriter class
-        :param filename: Name of XLS file
-        """
-        self.workbook = xlsxwriter.Workbook(filename)
-        self.worksheet = self.workbook.add_worksheet()
-        self.bold = self.workbook.add_format({'bold': True})
-        self.row = 0
-        self._col = 0
-        self.write_header()
-
-    def col(self, start=False):
-        """Returns the current column and moves to the next.
-           If start is True, it will move back to 0.
-        """
-        curcol = self._col
-        if start:
-            self._col = 0
-        else:
-            self._col += 1
-        return curcol
-
-    def write_header(self):
-        self.worksheet.write(self.row, self.col(), "Name", self.bold)
-        self.worksheet.write(self.row, self.col(), "Description", self.bold)
-        self.worksheet.write(self.row, self.col(), "File name", self.bold)
-        self.worksheet.write(self.row, self.col(), "Link", self.bold)
-        self.worksheet.write(self.row, self.col(start=True), "Command", self.bold)
-        self.row += 1
-
-    def __del__(self):
-        self.workbook.close()
-
 
 def get_showid_from_assetid(assetid, token):
     try:
@@ -180,13 +140,6 @@ def main(showid, isasset=False, chosen_season=0, chosen_episode=0, realm=REALMS[
         logger.info("No Episodes to download.")
         return
 
-    xlsname = "{0}.xlsx".format(get_valid_filename(show.show.name))
-    file_num = 0
-    while os.path.isfile(xlsname):
-        file_num += 1
-        xlsname = "{0}-{1}.xlsx".format(get_valid_filename(show.show.name), file_num)
-    xls = WorkbookWriter(xlsname)
-
     length = len(episodes)
     for num, episode in enumerate(episodes):
         logger.info("Getting link {0} of {1}".format(num + 1, length))
@@ -202,15 +155,12 @@ def main(showid, isasset=False, chosen_season=0, chosen_episode=0, realm=REALMS[
                     episode_name=episode.name
             )
         else:
-            filename = "{show_name} - S{season}E{episode} - {episode_name}".format(
+            filename = "{show_name}/S{season}/S{season}E{episode} - {episode_name}".format(
                     show_name=show.show.name,
                     season=str(episode.season).zfill(2),
                     episode=str(episode.episode).zfill(2),
                     episode_name=episode.name
             )
-        xls.worksheet.write(xls.row, xls.col(), episode.name)
-        xls.worksheet.write(xls.row, xls.col(), episode.description)
-        xls.worksheet.write(xls.row, xls.col(), filename)
 
         for attempt in range(NUM_OF_ATTEMPTS + 1):
             try:
@@ -220,14 +170,11 @@ def main(showid, isasset=False, chosen_season=0, chosen_episode=0, realm=REALMS[
                 })
             except Exception as exception:
                 logger.error("Connection for video id {0} failed: {1}".format(episode.id, str(exception)))
-                xls.row += 1
-                xls._col = 0
                 break
 
             if req.status_code == 429:
                 if attempt == NUM_OF_ATTEMPTS:
                     logger.error("Couldn't get episode.")
-                    xls._col = 0
                     break
 
                 waittime = (attempt + 1) * 5
@@ -239,21 +186,14 @@ def main(showid, isasset=False, chosen_season=0, chosen_episode=0, realm=REALMS[
 
             if req.status_code != 200:
                 logger.error("HTTP error code {0} for video id {1}".format(req.status_code, episode.id))
-                xls.row += 1
-                xls._col = 0
                 break
 
             data = req.json()
             video_link = data["data"]["attributes"]["streaming"]["hls"]["url"]
-            xls.worksheet.write(xls.row, xls.col(), video_link)
-            xls.worksheet.write(xls.row, xls.col(start=True),
-                                "youtube-dl \"{0}\" -o \"{1}.mp4\"".format(video_link, filename)
-                                )
+            os.system("youtube-dl \"{0}\" -o \"{1}.mp4\"".format(video_link, filename))
             break
 
-        xls.row += 1
-
-    logger.info("=> Saved to {0}".format(xlsname))
+    logger.info("=> Download done!")
 
 
 if __name__ == "__main__":
